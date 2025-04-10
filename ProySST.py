@@ -4,9 +4,11 @@ import numpy as np
 import cv2
 from PIL import Image
 import os
+from io import BytesIO
+import requests
 
 # Estilo de la página
-st.set_page_config(page_title="Verificación de Seguridad SST", page_icon="🦺")
+st.set_page_config(page_title="Verificación de Seguridad SST", page_icon="🪺")
 
 # Cargar clases desde el archivo
 def cargar_clases():
@@ -54,12 +56,24 @@ def dibujar_cajas(imagen, cajas, clases, puntuaciones, umbral=0.3):
     return imagen
 
 # Título y descripción
-st.title("🦺 Verificación de Implementos de Seguridad")
+st.title("🪺 Verificación de Implementos de Seguridad")
 st.write("Esta aplicación detecta si una persona porta elementos de seguridad como casco, chaleco, gafas, etc.")
 
 # Carga de imagen
+img_input = st.camera_input("Captura una imagen")
 
-img_input = st.camera_input("Captura una imagen") or st.file_uploader("O carga una imagen", type=["jpg", "png", "jpeg"]) or (lambda url: BytesIO(requests.get(url).content) if url else None)(st.text_input("O ingresa una URL de imagen"))
+if not img_input:
+    img_input = st.file_uploader("O carga una imagen", type=["jpg", "png", "jpeg"])
+
+if not img_input:
+    url = st.text_input("O ingresa una URL de imagen")
+    if url:
+        try:
+            response = requests.get(url)
+            response.raise_for_status()
+            img_input = BytesIO(response.content)
+        except Exception as e:
+            st.error(f"No se pudo cargar la imagen desde la URL: {e}")
 
 if img_input:
     imagen = Image.open(img_input)
@@ -69,19 +83,20 @@ if img_input:
     interpreter.set_tensor(input_details[0]['index'], input_data)
     interpreter.invoke()
 
-    # Suponiendo salida: [boxes, clases, scores]
+    # Ver detalles de salidas del modelo
+    # st.write("Detalles de salida del modelo:", output_details)
+
     try:
         cajas = interpreter.get_tensor(output_details[0]['index'])[0]
         clases = interpreter.get_tensor(output_details[1]['index'])[0]
         puntuaciones = interpreter.get_tensor(output_details[2]['index'])[0]
-    except:
-        st.error("No se pudieron interpretar las salidas del modelo.")
+    except Exception as e:
+        st.error(f"No se pudieron interpretar las salidas del modelo: {e}")
         st.stop()
 
     imagen_salida = dibujar_cajas(imagen, cajas, clases, puntuaciones, umbral=0.3)
     st.image(imagen_salida, caption="Resultados de detección", use_container_width=True)
 
-    # Mostrar objetos detectados
     detectados = [CLASES[int(clases[i])] for i in range(len(puntuaciones)) if puntuaciones[i] > 0.3]
     if detectados:
         st.success("Implementos detectados:")
