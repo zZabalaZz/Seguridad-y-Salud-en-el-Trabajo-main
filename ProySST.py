@@ -1,7 +1,7 @@
 import streamlit as st
 import numpy as np
 import onnxruntime as ort
-from PIL import Image, ImageDraw
+from PIL import Image, ImageDraw, ImageFont
 
 # Cargar clases desde archivo
 with open("clasesSST.txt", "r") as f:
@@ -53,6 +53,28 @@ def get_class_name(class_id):
     else:
         return f"Clase desconocida (id {class_id})"
 
+# Dibujar detecciones en la imagen
+def draw_detections(image, boxes, class_ids, scores):
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default()
+    
+    for box, cls_id, score in zip(boxes, class_ids, scores):
+        label = get_class_name(cls_id)
+        label_text = f"{label} ({score:.2f})"
+        
+        # Dibujar cuadro
+        draw.rectangle(box, outline="red", width=3)
+        
+        # Dibujar fondo del texto
+        text_size = draw.textsize(label_text, font)
+        text_background = [box[0], box[1] - text_size[1], box[0] + text_size[0], box[1]]
+        draw.rectangle(text_background, fill="red")
+        
+        # Dibujar texto
+        draw.text((box[0], box[1] - text_size[1]), label_text, fill="white", font=font)
+
+    return image
+
 # Interfaz Streamlit
 st.title("🦺 Detección de Seguridad con YOLOv8 (ONNX)")
 uploaded_file = st.file_uploader("📷 Sube una imagen", type=["jpg", "jpeg", "png"])
@@ -66,21 +88,15 @@ if uploaded_file is not None:
     output = session.run(None, {input_name: input_tensor})
     boxes, class_ids, scores = postprocess_output(output, image.copy())
 
-    # Dibujar resultados
-    draw = ImageDraw.Draw(image)
-    detected_labels = set()
+    # Dibujar resultados en la imagen
+    image_with_boxes = image.copy()
+    image_with_boxes = draw_detections(image_with_boxes, boxes, class_ids, scores)
+    st.image(image_with_boxes, caption="🟥 Imagen con Detecciones", use_column_width=True)
 
-    for box, cls_id, score in zip(boxes, class_ids, scores):
-        label = get_class_name(cls_id)
-        draw.rectangle(box, outline="red", width=3)
-        draw.text((box[0], box[1]), f"{label} ({score:.2f})", fill="red")
-        detected_labels.add(label)
-
-    st.image(image, caption="🟥 Imagen con Detecciones", use_column_width=True)
-
+    # Mostrar etiquetas detectadas
     st.markdown("### ✅ Objetos detectados:")
-    if detected_labels:
-        for label in detected_labels:
-            st.write(f"- {label}")
+    if boxes:
+        for cls_id in set(class_ids):
+            st.write(f"- {get_class_name(cls_id)}")
     else:
         st.write("⚠️ No se detectaron elementos con suficiente confianza.")
