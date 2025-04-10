@@ -1,44 +1,43 @@
 import streamlit as st
 import numpy as np
-import tensorflow as tf
+import onnxruntime as ort
 from PIL import Image, ImageDraw
 
 # Cargar clases
 with open("clasesSST.txt", "r") as f:
     CLASSES = [line.strip() for line in f.readlines()]
 
-# Cargar modelo TFLite
-interpreter = tf.lite.Interpreter(model_path="yolov8n_float32.tflite")
-interpreter.allocate_tensors()
+# Configurar sesión de ONNX
+onnx_model_path = "yolov8n.onnx"
+session = ort.InferenceSession(onnx_model_path, providers=["CPUExecutionProvider"])
+input_name = session.get_inputs()[0].name
+input_shape = session.get_inputs()[0].shape  # [1, 3, h, w]
+input_height, input_width = input_shape[2], input_shape[3]
 
-input_details = interpreter.get_input_details()
-output_details = interpreter.get_output_details()
-input_shape = input_details[0]['shape'][1:3]
-
-# Preprocesamiento de imagen
+# Preprocesar imagen para YOLOv8 ONNX
 def preprocess_image(image):
-    image_resized = image.resize(input_shape)
-    image_array = np.asarray(image_resized).astype(np.float32)
-    image_array = np.expand_dims(image_array, axis=0)  # [1, h, w, 3]
+    image_resized = image.resize((input_width, input_height))
+    image_array = np.array(image_resized).astype(np.float32) / 255.0  # Normalizar
+    image_array = np.transpose(image_array, (2, 0, 1))  # HWC -> CHW
+    image_array = np.expand_dims(image_array, axis=0)  # [1, 3, h, w]
     return image_array
 
-# Postprocesamiento para YOLOv8 salida [1, N, 6]
-def postprocess_output(output_data, original_image):
-    w_img, h_img = original_image.size
+# Postprocesamiento para YOLOv8 ONNX (salida [1, N, 6])
+def postprocess_output(output, orig_image, conf_threshold=0.3):
+    image_width, image_height = orig_image.size
+    detections = output[0]  # [1, N, 6]
     boxes, class_ids, scores = [], [], []
 
-    detections = output_data[0][0]  # [1, N, 6]
-
     for det in detections:
-        if det[4] > 0.4:  # Umbral de confianza
+        if det[4] > conf_threshold:
             x_center, y_center, width, height = det[0], det[1], det[2], det[3]
             class_id = int(det[5])
-            
-            # Coordenadas absolutas
-            left = int((x_center - width / 2) * w_img)
-            top = int((y_center - height / 2) * h_img)
-            right = int((x_center + width / 2) * w_img)
-            bottom = int((y_center + height / 2) * h_img)
+
+            # Convertir a coordenadas absolutas
+            left = int((x_center - width / 2) * image_width)
+            top = int((y_center - height / 2) * image_height)
+            right = int((x_center + width / 2) * image_width)
+            bottom = int((y_center + height / 2) * image_height)
 
             boxes.append((left, top, right, bottom))
             class_ids.append(class_id)
@@ -47,9 +46,9 @@ def postprocess_output(output_data, original_image):
     return boxes, class_ids, scores
 
 # Interfaz Streamlit
-st.title("🦺 Detección de Elementos de Seguridad con YOLOv8")
+st.title("🦺 Detección de Seguridad con YOLOv8 ONNX")
 
-uploaded_file = st.file_uploader("📸 Sube una imagen", type=["jpg", "jpeg", "png"])
+uploaded_file = st.file_uploader("📷 Sube una imagen", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
     image = Image.open(uploaded_file).convert("RGB")
@@ -57,12 +56,10 @@ if uploaded_file is not None:
 
     # Inferencia
     input_tensor = preprocess_image(image)
-    interpreter.set_tensor(input_details[0]['index'], input_tensor)
-    interpreter.invoke()
-    output_data = [interpreter.get_tensor(output['index']) for output in output_details]
+    output = session.run(None, {input_name: input_tensor})
+    boxes, class_ids, scores = postprocess_output(output, image.copy())
 
-    # Postprocesamiento
-    boxes, class_ids, scores = postprocess_output(output_data, image.copy())
+    # Dibujar resultados
     draw = ImageDraw.Draw(image)
     detected_labels = set()
 
