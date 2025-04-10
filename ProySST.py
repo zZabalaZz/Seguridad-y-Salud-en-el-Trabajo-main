@@ -3,18 +3,18 @@ import numpy as np
 import onnxruntime as ort
 from PIL import Image, ImageDraw
 
-# Cargar clases
+# Cargar clases desde archivo
 with open("clasesSST.txt", "r") as f:
     CLASSES = [line.strip() for line in f.readlines()]
 
-# Configurar sesión de ONNX
+# Cargar modelo ONNX
 onnx_model_path = "yolov8n.onnx"
 session = ort.InferenceSession(onnx_model_path, providers=["CPUExecutionProvider"])
 input_name = session.get_inputs()[0].name
 input_shape = session.get_inputs()[0].shape  # [1, 3, h, w]
 input_height, input_width = input_shape[2], input_shape[3]
 
-# Preprocesar imagen para YOLOv8 ONNX
+# Preprocesamiento
 def preprocess_image(image):
     image_resized = image.resize((input_width, input_height))
     image_array = np.array(image_resized).astype(np.float32) / 255.0  # Normalizar
@@ -22,14 +22,15 @@ def preprocess_image(image):
     image_array = np.expand_dims(image_array, axis=0)  # [1, 3, h, w]
     return image_array
 
-# Postprocesamiento para YOLOv8 ONNX (salida [1, N, 6])
+# Postprocesamiento de salida del modelo ONNX
 def postprocess_output(output, orig_image, conf_threshold=0.3):
     image_width, image_height = orig_image.size
-    detections = output[0]  # [1, N, 6]
+    detections = output[0][0]  # Convertir de [1, N, 6] a [N, 6]
     boxes, class_ids, scores = [], [], []
 
     for det in detections:
-        if det[4] > conf_threshold:
+        confidence = det[4]
+        if confidence > conf_threshold:
             x_center, y_center, width, height = det[0], det[1], det[2], det[3]
             class_id = int(det[5])
 
@@ -41,13 +42,12 @@ def postprocess_output(output, orig_image, conf_threshold=0.3):
 
             boxes.append((left, top, right, bottom))
             class_ids.append(class_id)
-            scores.append(det[4])
+            scores.append(confidence)
 
     return boxes, class_ids, scores
 
 # Interfaz Streamlit
-st.title("🦺 Detección de Seguridad con YOLOv8 ONNX")
-
+st.title("🦺 Detección de Seguridad con YOLOv8 (ONNX)")
 uploaded_file = st.file_uploader("📷 Sube una imagen", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
