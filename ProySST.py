@@ -65,13 +65,20 @@ def draw_detections(image, boxes, class_ids, scores):
         # Dibujar cuadro
         draw.rectangle(box, outline="red", width=3)
         
-        # Dibujar fondo del texto
-        text_size = draw.textsize(label_text, font)
-        text_background = [box[0], box[1] - text_size[1], box[0] + text_size[0], box[1]]
+        # Obtener tamaño del texto
+        text_width, text_height = font.getsize(label_text)
+        
+        # Dibujar fondo para el texto
+        text_background = [
+            box[0],
+            box[1] - text_height - 2,
+            box[0] + text_width + 4,
+            box[1]
+        ]
         draw.rectangle(text_background, fill="red")
         
-        # Dibujar texto
-        draw.text((box[0], box[1] - text_size[1]), label_text, fill="white", font=font)
+        # Dibujar texto encima del fondo
+        draw.text((box[0] + 2, box[1] - text_height - 1), label_text, fill="white", font=font)
 
     return image
 
