@@ -5,7 +5,7 @@ from PIL import Image, ImageDraw
 
 # Cargar clases desde archivo
 with open("clasesSST.txt", "r") as f:
-    CLASSES = [line.strip() for line in f.readlines()]
+    CLASES = [line.strip() for line in f.readlines()]
 
 # Cargar modelo ONNX
 onnx_model_path = "yolov8n.onnx"
@@ -14,7 +14,7 @@ input_name = session.get_inputs()[0].name
 input_shape = session.get_inputs()[0].shape  # [1, 3, h, w]
 input_height, input_width = input_shape[2], input_shape[3]
 
-# Preprocesamiento
+# Preprocesar imagen
 def preprocess_image(image):
     image_resized = image.resize((input_width, input_height))
     image_array = np.array(image_resized).astype(np.float32) / 255.0  # Normalizar
@@ -22,10 +22,10 @@ def preprocess_image(image):
     image_array = np.expand_dims(image_array, axis=0)  # [1, 3, h, w]
     return image_array
 
-# Postprocesamiento de salida del modelo ONNX
+# Postprocesamiento
 def postprocess_output(output, orig_image, conf_threshold=0.3):
     image_width, image_height = orig_image.size
-    detections = output[0][0]  # Convertir de [1, N, 6] a [N, 6]
+    detections = output[0][0]  # [N, 6]
     boxes, class_ids, scores = [], [], []
 
     for det in detections:
@@ -34,7 +34,7 @@ def postprocess_output(output, orig_image, conf_threshold=0.3):
             x_center, y_center, width, height = det[0], det[1], det[2], det[3]
             class_id = int(det[5])
 
-            # Convertir a coordenadas absolutas
+            # Coordenadas absolutas
             left = int((x_center - width / 2) * image_width)
             top = int((y_center - height / 2) * image_height)
             right = int((x_center + width / 2) * image_width)
@@ -45,6 +45,13 @@ def postprocess_output(output, orig_image, conf_threshold=0.3):
             scores.append(confidence)
 
     return boxes, class_ids, scores
+
+# Obtener nombre seguro de clase
+def get_class_name(class_id):
+    if 0 <= class_id < len(CLASES):
+        return CLASES[class_id]
+    else:
+        return f"Clase desconocida (id {class_id})"
 
 # Interfaz Streamlit
 st.title("🦺 Detección de Seguridad con YOLOv8 (ONNX)")
@@ -64,7 +71,7 @@ if uploaded_file is not None:
     detected_labels = set()
 
     for box, cls_id, score in zip(boxes, class_ids, scores):
-        label = CLASSES[cls_id] if cls_id < len(CLASSES) else f"Clase {cls_id}"
+        label = get_class_name(cls_id)
         draw.rectangle(box, outline="red", width=3)
         draw.text((box[0], box[1]), f"{label} ({score:.2f})", fill="red")
         detected_labels.add(label)
