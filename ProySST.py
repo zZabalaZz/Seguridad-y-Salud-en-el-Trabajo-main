@@ -1,105 +1,78 @@
 import streamlit as st
-import tensorflow as tf
 import numpy as np
-import cv2
-from PIL import Image
-import os
-from io import BytesIO
-import requests
+import tensorflow as tf
+from PIL import Image, ImageDraw
+import io
 
-# Estilo de la página
-st.set_page_config(page_title="Verificación de Seguridad SST", page_icon="🪺")
-
-# Cargar clases desde el archivo
-def cargar_clases():
-    try:
-        with open("clasesSST.txt", "r", encoding="utf-8") as f:
-            return [line.strip() for line in f.readlines()]
-    except FileNotFoundError:
-        st.error("Archivo clasesSST.txt no encontrado.")
-        return []
-
-CLASES = cargar_clases()
+# Cargar clases
+with open("clasesSST.txt", "r") as f:
+    CLASSES = [line.strip() for line in f.readlines()]
 
 # Cargar modelo TFLite
-@st.cache_resource
-def cargar_modelo():
-    interpreter = tf.lite.Interpreter(model_path="yolov8n_float32.tflite")
-    interpreter.allocate_tensors()
-    return interpreter
+interpreter = tf.lite.Interpreter(model_path="yolov8n_float32.tflite")
+interpreter.allocate_tensors()
 
-interpreter = cargar_modelo()
 input_details = interpreter.get_input_details()
 output_details = interpreter.get_output_details()
+input_shape = input_details[0]['shape'][1:3]
 
-# Preprocesar imagen
-def preprocesar(imagen):
-    imagen = imagen.resize((640, 640))
-    img_array = np.array(imagen).astype(np.float32)
-    img_array = img_array / 255.0
-    img_array = np.expand_dims(img_array, axis=0)
-    return img_array
+# Función para preparar imagen
+def preprocess_image(image):
+    image_resized = image.resize(input_shape)
+    image_array = np.asarray(image_resized).astype(np.float32)
+    image_array = np.expand_dims(image_array, axis=0)  # [1, h, w, 3]
+    return image_array
 
-# Dibujar resultados
-def dibujar_cajas(imagen, cajas, clases, puntuaciones, umbral=0.3):
-    imagen = np.array(imagen)
-    h, w, _ = imagen.shape
-    for i in range(len(puntuaciones)):
-        if puntuaciones[i] > umbral:
-            y1, x1, y2, x2 = cajas[i]
-            x1, x2 = int(x1 * w), int(x2 * w)
-            y1, y2 = int(y1 * h), int(y2 * h)
-            class_id = int(clases[i])
-            label = CLASES[class_id] if class_id < len(CLASES) else f"ID {class_id}"
-            cv2.rectangle(imagen, (x1, y1), (x2, y2), (0, 255, 0), 2)
-            cv2.putText(imagen, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
-    return imagen
+# Función para post-procesar salidas
+def postprocess_output(output_data, original_image):
+    boxes, class_ids, scores = [], [], []
+    
+    output = output_data[0][0]  # Dependiendo del modelo puede necesitar ajuste
 
-# Título y descripción
-st.title("🪺 Verificación de Implementos de Seguridad")
-st.write("Esta aplicación detecta si una persona porta elementos de seguridad como casco, chaleco, gafas, etc.")
+    h, w = original_image.size
+    for det in output_data[0]:
+        if det[4] > 0.4:  # Umbral de confianza
+            x, y, width, height = det[0], det[1], det[2], det[3]
+            left = int((x - width / 2) * w)
+            top = int((y - height / 2) * h)
+            right = int((x + width / 2) * w)
+            bottom = int((y + height / 2) * h)
+            class_id = int(det[5])
+            boxes.append((left, top, right, bottom))
+            class_ids.append(class_id)
+            scores.append(det[4])
+    
+    return boxes, class_ids, scores
 
-# Carga de imagen
-img_input = st.camera_input("Captura una imagen")
+# Interfaz Streamlit
+st.title("Detección de Elementos de Seguridad con YOLOv8")
+uploaded_file = st.file_uploader("Sube una imagen", type=["jpg", "jpeg", "png"])
 
-if not img_input:
-    img_input = st.file_uploader("O carga una imagen", type=["jpg", "png", "jpeg"])
+if uploaded_file is not None:
+    image = Image.open(uploaded_file).convert("RGB")
+    st.image(image, caption="Imagen original", use_column_width=True)
 
-if not img_input:
-    url = st.text_input("O ingresa una URL de imagen")
-    if url:
-        try:
-            response = requests.get(url)
-            response.raise_for_status()
-            img_input = BytesIO(response.content)
-        except Exception as e:
-            st.error(f"No se pudo cargar la imagen desde la URL: {e}")
-
-if img_input:
-    imagen = Image.open(img_input)
-    st.image(imagen, caption="Imagen cargada", use_container_width=True)
-
-    input_data = preprocesar(imagen)
-    interpreter.set_tensor(input_details[0]['index'], input_data)
+    input_tensor = preprocess_image(image)
+    interpreter.set_tensor(input_details[0]['index'], input_tensor)
     interpreter.invoke()
 
-    # Ver detalles de salidas del modelo
-    # st.write("Detalles de salida del modelo:", output_details)
+    output_data = [interpreter.get_tensor(output['index']) for output in output_details]
+    boxes, class_ids, scores = postprocess_output(output_data, image)
 
-    try:
-        cajas = interpreter.get_tensor(output_details[0]['index'])[0]
-        clases = interpreter.get_tensor(output_details[1]['index'])[0]
-        puntuaciones = interpreter.get_tensor(output_details[2]['index'])[0]
-    except Exception as e:
-        st.error(f"No se pudieron interpretar las salidas del modelo: {e}")
-        st.stop()
+    draw = ImageDraw.Draw(image)
+    detected_labels = set()
 
-    imagen_salida = dibujar_cajas(imagen, cajas, clases, puntuaciones, umbral=0.3)
-    st.image(imagen_salida, caption="Resultados de detección", use_container_width=True)
+    for box, cls_id, score in zip(boxes, class_ids, scores):
+        label = CLASSES[cls_id] if cls_id < len(CLASSES) else f"Clase {cls_id}"
+        draw.rectangle(box, outline="red", width=3)
+        draw.text((box[0], box[1]), f"{label} ({score:.2f})", fill="red")
+        detected_labels.add(label)
 
-    detectados = [CLASES[int(clases[i])] for i in range(len(puntuaciones)) if puntuaciones[i] > 0.3]
-    if detectados:
-        st.success("Implementos detectados:")
-        st.write(", ".join(set(detectados)))
+    st.image(image, caption="Imagen con Detecciones", use_column_width=True)
+
+    st.markdown("### Objetos detectados:")
+    if detected_labels:
+        for label in detected_labels:
+            st.write(f"- {label}")
     else:
-        st.warning("No se detectaron implementos de seguridad.")
+        st.write("No se detectaron elementos con suficiente confianza.")
