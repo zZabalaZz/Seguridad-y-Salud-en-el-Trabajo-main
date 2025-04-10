@@ -57,30 +57,33 @@ def get_class_name(class_id):
 def draw_detections(image, boxes, class_ids, scores):
     draw = ImageDraw.Draw(image)
     font = ImageFont.load_default()
-    
+
     for box, cls_id, score in zip(boxes, class_ids, scores):
         label = get_class_name(cls_id)
         label_text = f"{label} ({score:.2f})"
-        
-        # Dibujar cuadro
+
+        # Calcular el tamaño del texto usando textbbox
+        text_bbox = draw.textbbox((0, 0), label_text, font=font)
+        text_width = text_bbox[2] - text_bbox[0]
+        text_height = text_bbox[3] - text_bbox[1]
+
+        # Dibujar el rectángulo de la caja
         draw.rectangle(box, outline="red", width=3)
-        
-        # Obtener tamaño del texto
-        text_width, text_height = font.getsize(label_text)
-        
+
         # Dibujar fondo para el texto
         text_background = [
             box[0],
-            box[1] - text_height - 2,
+            box[1] - text_height - 4,
             box[0] + text_width + 4,
             box[1]
         ]
         draw.rectangle(text_background, fill="red")
-        
-        # Dibujar texto encima del fondo
-        draw.text((box[0] + 2, box[1] - text_height - 1), label_text, fill="white", font=font)
+
+        # Dibujar texto
+        draw.text((box[0] + 2, box[1] - text_height - 2), label_text, fill="white", font=font)
 
     return image
+
 
 # Interfaz Streamlit
 st.title("🦺 Detección de Seguridad con YOLOv8 (ONNX)")
